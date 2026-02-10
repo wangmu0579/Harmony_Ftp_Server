@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "module description"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "description"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "label"
+    },
+    {
+      "name": "permission_network_info",
+      "value": "Needed to get device IP address for FTP server"
+    },
+    {
+      "name": "permission_internet",
+      "value": "Needed for FTP server network operations"
+    }
+  ]
+}
