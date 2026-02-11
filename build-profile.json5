@@ -1,6 +1,20 @@
 {
   "app": {
-    "signingConfigs": [],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "/Users/wangmu0579/.ohos/config/default_ftpServer_T999x3hch3879zw7jH4ymq3jN-tX_U2zvjQpETPzatQ=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "00000019482986C10776374059C351A607DDE1BE24F69E0ED0F898A2245C8784207836971C4F4CE137",
+          "profile": "/Users/wangmu0579/.ohos/config/default_ftpServer_T999x3hch3879zw7jH4ymq3jN-tX_U2zvjQpETPzatQ=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "/Users/wangmu0579/.ohos/config/default_ftpServer_T999x3hch3879zw7jH4ymq3jN-tX_U2zvjQpETPzatQ=.p12",
+          "storePassword": "00000019DF9C8FFD685C8E7F3FC326BC9D0F899923E43520AE115FD2E7D4B82B50B5982E8845B72D67"
+        }
+      }
+    ],
     "products": [
       {
         "name": "default",

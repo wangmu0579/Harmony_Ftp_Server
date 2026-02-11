@@ -35,7 +35,7 @@ export class FtpServer {
         });
 
         const address: socket.NetAddress = {
-          address: '',
+          address: '0.0.0.0',
           port: this.config.port
         };
         await this.serverSocket.listen(address);

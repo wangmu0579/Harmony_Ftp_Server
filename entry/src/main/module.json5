@@ -12,14 +12,12 @@
     "installationFree": false,
     "pages": "$profile:main_pages",
     "requestPermissions": [
-      { "name": "ohos.permission.GET_WIFI_INFO" },
-      { "name": "ohos.permission.SET_WIFI_INFO" },
       {
-        "name": "ohos.permission.GET_NETWORK_INFO",
+        "name": "ohos.permission.GET_WIFI_INFO",
         "reason": "$string:permission_network_info",
         "usedScene": {
           "abilities": ["EntryAbility"],
-          "when": "inuse"
+          "when": "always"
         }
       },
       {

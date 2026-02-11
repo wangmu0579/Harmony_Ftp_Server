@@ -1,6 +1,7 @@
 
 import { FtpServerManager } from '../ftp/FtpServerManager';
 import wifiManager from '@ohos.wifiManager';
+import abilityAccessCtrl, { Permissions } from '@ohos.abilityAccessCtrl';
 import { FtpConfig } from '../ftp/FtpConfig';
 // 定义接口
 export interface ServerConfig {
@@ -53,16 +54,13 @@ struct Index {
   // 使用真实的鸿蒙系统API获取WiFi信息
   private async getWifiInfoFromSystem(): Promise<WifiInfo> {
     try {
-      // 导入网络模块
-      ;
+
       //console.log(wifiManager.isWifiActive());
       if (!wifiManager.isWifiActive()) {
         console.warn('WiFi is not enabled');
         return {};
       }
-      
-      // 获取当前连接的WiFi信息
-      const wifiInfo = await wifiManager.getIpInfo();
+     const wifiInfo =  wifiManager.getIpInfo();
       if (wifiInfo) {
         return {
           ipAddress: wifiInfo.ipAddress
@@ -91,8 +89,7 @@ struct Index {
       : 'FTP Server is stopped';
   }
 
-  async startServer() {
-    if (this.isLoading) return;
+  async startServer() {if (this.isLoading) return;
     
     this.isLoading = true;
     this.statusMessage = 'Starting FTP Server...';

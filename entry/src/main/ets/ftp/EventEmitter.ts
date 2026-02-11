@@ -7,8 +7,7 @@ export class EventEmitter {
     }
     this.events.get(event)!.push(listener);
   }
-
-  emit(event: string, ...args: any[]): void {
+  emit(event: string, ...args: unknown[]): void {
     const listeners = this.events.get(event);
     if (listeners) {
       listeners.forEach(listener => {

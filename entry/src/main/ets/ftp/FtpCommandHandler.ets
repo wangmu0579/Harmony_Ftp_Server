@@ -1,5 +1,8 @@
 import { FtpConnection } from './FtpConnection';
 import { FtpFileSystem } from './FtpFileSystem';
+import net from '@ohos.net.socket';
+import socket from '@ohos.net.socket';
+
 
 export class FtpCommandHandler {
   private connection: FtpConnection;
@@ -187,14 +190,74 @@ export class FtpCommandHandler {
 
       this.connection.sendResponse(150, 'Opening BINARY mode data connection for file transfer');
       
-      // 这里需要实现从数据连接读取文件数据的逻辑
-      // 简化实现
+      // 实现从数据连接读取文件数据的逻辑
+      const fileData = await this.readDataFromSocket(dataSocket);
+
+      // 将读取的数据写入文件
+      const filePath = `${this.connection.getCurrentDirectory()}/${filename}`;
+      await this.fileSystem.writeFile(filePath, fileData);
+
       await this.connection.closeDataConnection();
-      
+
       this.connection.sendResponse(226, 'Transfer complete');
     } catch (error) {
+      console.error('Error handling STOR command:', error);
       this.connection.sendResponse(550, 'Failed to store file');
     }
+  }
+
+  // 从数据连接读取文件数据
+  private async readDataFromSocket(dataSocket: socket.TCPSocketConnection): Promise<ArrayBuffer> {
+    return new Promise<ArrayBuffer>((resolve, reject) => {
+      let dataChunks: ArrayBuffer[] = [];
+      let totalSize = 0;
+
+      // 监听消息
+      dataSocket.on('message', (messageInfo: socket.SocketMessageInfo) => {
+        try {
+          const data = messageInfo.message;
+          if (data && data.byteLength > 0) {
+            dataChunks.push(data);
+            totalSize += data.byteLength;
+          }
+        } catch (error) {
+          console.error('Error receiving data:', error);
+          reject(new Error('Failed to receive data'));
+        }
+      });
+
+      // 监听连接关闭
+      dataSocket.on('close', () => {
+        try {
+          // 合并所有数据块
+          const result = new ArrayBuffer(totalSize);
+          const resultView = new Uint8Array(result);
+          let offset = 0;
+
+          for (const chunk of dataChunks) {
+            const chunkView = new Uint8Array(chunk);
+            resultView.set(chunkView, offset);
+            offset += chunk.byteLength;
+          }
+
+          resolve(result);
+        } catch (error) {
+          console.error('Error processing received data:', error);
+          reject(new Error('Failed to process received data'));
+        }
+      });
+
+      // 监听错误
+      dataSocket.on('error', (error: Error) => {
+        console.error('Socket error:', error);
+        reject(new Error('Socket error during data transfer'));
+      });
+
+      // 设置超时
+      setTimeout(() => {
+        reject(new Error('Data transfer timeout'));
+      }, 300000); // 5分钟超时
+    });
   }
 
   private async handleDELE(filename: string): Promise<void> {
