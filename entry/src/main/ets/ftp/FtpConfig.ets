@@ -6,6 +6,7 @@ export interface FtpConfigOptions {
   user?: string;
   password?: string;
   allowAnonymous?: boolean;
+  serverIp?: string;
 }
 
 export class FtpConfig {
@@ -15,14 +16,16 @@ export class FtpConfig {
   readonly user: string;
   readonly password: string;
   readonly allowAnonymous: boolean;
+  readonly serverIp: string;
 
   constructor(options: FtpConfigOptions = {}) {
-    this.port = options.port || 21;
+    this.port = options.port || 2121;
     this.rootDirectory = options.rootDirectory || '/';
     this.maxConnections = options.maxConnections || 10;
     this.user = options.user || 'anonymous';
     this.password = options.password || '';
     this.allowAnonymous = options.allowAnonymous !== undefined ? options.allowAnonymous : true;
+    this.serverIp = options.serverIp || '127.0.0.1';
   }
 
   // 验证用户凭据

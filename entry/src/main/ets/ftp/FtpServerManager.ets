@@ -30,14 +30,17 @@ export class FtpServerManager {
 
       // 更新配置
       if (config) {
+        console.info('[FTP] startServer: Received config.rootDirectory:', config.rootDirectory);
         this.config = new FtpConfig({
           port: config.port || this.config.port,
           rootDirectory: config.rootDirectory || this.config.rootDirectory,
           maxConnections: config.maxConnections || this.config.maxConnections,
           user: config.user || this.config.user,
           password: config.password || this.config.password,
-          allowAnonymous: config.allowAnonymous !== undefined ? config.allowAnonymous : this.config.allowAnonymous
+          allowAnonymous: config.allowAnonymous !== undefined ? config.allowAnonymous : this.config.allowAnonymous,
+          serverIp: config.serverIp || this.config.serverIp
         });
+        console.info('[FTP] startServer: New config.rootDirectory:', this.config.rootDirectory);
       }
 
       // 创建并启动服务器

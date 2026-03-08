@@ -3,12 +3,23 @@ import { FtpServerManager } from '../ftp/FtpServerManager';
 import wifiManager from '@ohos.wifiManager';
 import abilityAccessCtrl, { Permissions } from '@ohos.abilityAccessCtrl';
 import { FtpConfig } from '../ftp/FtpConfig';
+import picker from '@ohos.file.picker';
+import bundleManager from '@ohos.bundle.bundleManager';
+import common from '@ohos.app.ability.common';
+
 // 定义接口
 export interface ServerConfig {
   port: number;
   user: string;
   password: string;
   allowAnonymous: boolean;
+  rootDirectory: string;
+  serverIp: string;
+}
+
+interface PermissionInfo {
+  name: string;
+  desc: string;
 }
 
 // WiFi信息接口
@@ -20,10 +31,11 @@ export interface WifiInfo {
 @Component
 struct Index {
   @State isServerRunning: boolean = false;
-  @State serverPort: number = 21;
+  @State serverPort: number = 2121;
   @State serverUser: string = 'anonymous';
   @State serverPassword: string = '';
   @State allowAnonymous: boolean = true;
+  @State rootDirectory: string = '';
   @State connectionCount: number = 0;
   @State statusMessage: string = 'FTP Server is stopped';
   @State isLoading: boolean = false;
@@ -31,10 +43,125 @@ struct Index {
 
   private serverManager = FtpServerManager.getInstance();
 
+  private updateTimer: number = -1;
+
   aboutToAppear() {
+    this.serverManager.setLogLevel("debug");
+    //serverManager.setLogLevel('debug');
+    this.requestPermissions();
     this.checkServerStatus();
     this.getDeviceIpAddress();
+    this.startStatusUpdateTimer();
+    this.selectRootDirectory();
   }
+
+  aboutToDisappear() {
+    this.stopStatusUpdateTimer();
+  }
+
+  // 请求存储权限
+  private async requestPermissions(): Promise<void> {
+    try {
+      console.info('[Permission] Requesting storage permissions...');
+      
+      // 获取应用的abilityAccessCtrl管理器
+      const atManager = abilityAccessCtrl.createAtManager();
+      
+      // 获取应用bundle信息
+      const bundleInfo = await bundleManager.getBundleInfoForSelf(bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION);
+      const appInfo = bundleInfo.appInfo;
+      const tokenId = appInfo.accessTokenId;
+      
+      console.info('[Permission] TokenId:', tokenId);
+      
+      // 定义权限列表
+      const permissions: PermissionInfo[] = [
+        { name: 'ohos.permission.READ_MEDIA', desc: 'read media' },
+        { name: 'ohos.permission.WRITE_MEDIA', desc: 'write media' }
+      ];
+      
+      // 检查并请求权限
+      for (let i = 0; i < permissions.length; i++) {
+        const perm = permissions[i];
+        try {
+          // 检查权限状态
+          const permName: Permissions = perm.name as Permissions;
+          const granted = atManager.checkAccessTokenSync(tokenId, permName);
+          console.info('[Permission]', perm.name, 'granted:', granted === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED);
+          
+          if (granted !== abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
+            console.info('[Permission] Requesting:', perm.name);
+            // 请求权限
+            await atManager.requestPermissionsFromUser(
+              globalThis.AbilityContext as common.UIAbilityContext,
+              [permName]
+            );
+          }
+        } catch (err) {
+          console.error('[Permission] Error with', perm.name, ':', (err as Error).message);
+        }
+      }
+      
+      console.info('[Permission] Permissions check complete');
+    } catch (error) {
+      console.error('[Permission] Error requesting permissions:', (error as Error).message);
+    }
+  }
+
+  // 启动定时器定期更新服务器状态
+  private startStatusUpdateTimer() {
+    if (this.updateTimer !== -1) {
+      return;
+    }
+    // 每2秒更新一次连接数
+    this.updateTimer = setInterval(() => {
+      this.checkServerStatus();
+    }, 2000);
+  }
+
+  // 停止定时器
+  private stopStatusUpdateTimer() {
+    if (this.updateTimer !== -1) {
+      clearInterval(this.updateTimer);
+      this.updateTimer = -1;
+    }
+  }
+
+  // 选择根目录 - 弹出文件夹选择器
+  private selectRootDirectory(): void {
+    try {
+      // 使用picker选择目录，设置选项以允许选择文件夹
+      const documentPicker = new picker.DocumentViewPicker();
+      
+      // 选择文件，然后获取其父目录作为FTP根目录
+      const options = new picker.DocumentSelectOptions();
+      options.fileSuffixFilters = ['*']; // 允许选择所有文件
+      
+      documentPicker.select(options, (err: Error, result: string[]) => {
+        if (err) {
+          // 如果失败，使用默认路径
+          const context = getContext();
+          this.rootDirectory = "/storage/media/100/local/files/Docs";
+          return;
+        }
+        if (result && result.length > 0) {
+          // 获取选中文件的父目录
+          const selectedPath = result[0];
+          const lastSlash = selectedPath.lastIndexOf('/');
+          if (lastSlash > 0) {
+            this.rootDirectory = selectedPath.substring(0, lastSlash);
+          } else {
+            this.rootDirectory = selectedPath;
+          }
+        }
+      });
+    } catch (e) {
+      // 如果出错，使用默认路径
+      const context = getContext();
+      this.rootDirectory = "/storage/media/100/local/files/Docs";
+    }
+  }
+
   async getDeviceIpAddress() {
     try {
       // 获取WiFi信息 - 使用鸿蒙系统API
@@ -47,7 +174,8 @@ struct Index {
         this.deviceIpAddress = 'No IP address found';
       }
     } catch (error) {
-      console.error('Failed to get IP address:', error);
+      const err: Error = error as Error;
+      console.error('Failed to get IP address:', err.message);
       this.deviceIpAddress = 'Failed to get IP address';
     }
   }
@@ -68,7 +196,8 @@ struct Index {
       }
       return {};
     } catch (error) {
-      console.error('Failed to get WiFi info:', error);
+      const err: Error = error as Error;
+      console.error('Failed to get WiFi info:', err.message);
       // 如果API不可用，返回空对象
       return {};
     }
@@ -99,7 +228,9 @@ struct Index {
         port: this.serverPort,
         user: this.serverUser,
         password: this.serverPassword,
-        allowAnonymous: this.allowAnonymous
+        allowAnonymous: this.allowAnonymous,
+        rootDirectory: this.rootDirectory,
+        serverIp: this.deviceIpAddress
       };
       
       const result = await this.serverManager.startServer(config);
@@ -110,7 +241,8 @@ struct Index {
         this.statusMessage = 'Failed to start FTP Server';
       }
     } catch (error) {
-      this.statusMessage = `Error starting server: ${error}`;
+      const err: Error = error as Error;
+      this.statusMessage = `Error starting server: ${err.message}`;
     } finally {
       this.isLoading = false;
     }
@@ -128,7 +260,8 @@ struct Index {
       this.isServerRunning = false;
       this.connectionCount = 0;
     } catch (error) {
-      this.statusMessage = `Error stopping server: ${error}`;
+      const err: Error = error as Error;
+      this.statusMessage = `Error stopping server: ${err.message}`;
     } finally {
       this.isLoading = false;
     }
@@ -283,6 +416,27 @@ struct Index {
             })
         }
 
+        // Root Directory Configuration
+        Row({
+          space: 10
+        }) {
+          Text('Root Dir:')
+            .width('30%')
+            .fontSize(16)
+            .alignSelf(ItemAlign.Center)
+          
+          Button(this.rootDirectory || 'Select Folder')
+            .width('70%')
+            .height(40)
+            .fontSize(14)
+            .borderRadius(8)
+            .border({ width: 1, color: '#DDDDDD' })
+            .backgroundColor('#FFFFFF')
+            .onClick(() => {
+              this.selectRootDirectory();
+            })
+        }
+
         // Allow Anonymous
         Row({
           space: 10
@@ -315,7 +469,7 @@ struct Index {
         .margin({ top: 20, bottom: 40 })
         .textAlign(TextAlign.Center)
 
-      Text('Root Directory: App Sandbox')
+      Text(`Root Directory: ${this.rootDirectory}`)
         .fontSize(14)
         .fontColor('#666666')
         .textAlign(TextAlign.Center)

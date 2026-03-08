@@ -87,15 +87,57 @@ export class FtpConnection extends EventEmitter {
     }
   }
 
+  // 用于发送多行响应的中间行（不带状态码，以空格开头）
+  sendResponseLine(message: string): void {
+    try {
+      this.clientSocket.send({ data: ` ${message}\r\n` });
+    } catch (error) {
+      this.logger.error(`Error sending response line: ${error}`);
+    }
+  }
+
+  async sendData(data: string | ArrayBuffer): Promise<void> {
+    if (this.dataSocket) {
+      try {
+        await this.dataSocket.send({ data: data });
+      } catch (error) {
+        this.logger.error(`Error sending data: ${error}`);
+       // throw error;
+      }
+    } else {
+      throw new Error('No data socket available');
+    }
+  }
+
   private dataPort: number = 0;
   private dataServer: DataServer | null = null;
   private activeModeAddress: string = '';
   private activeModePort: number = 0;
+  private passiveAddress: string = '';
+  private static nextPassivePort: number = 50000;
 
   async openDataConnection(): Promise<socket.TCPSocketConnection | null> {
     try {
-      // 这里实现被动模式的数据连接
+      // 如果已经有数据服务器在监听，直接返回
+      if (this.dataServer && !this.dataSocket) {
+        return null; // 服务器已就绪，等待客户端连接
+      }
+      
+      // 关闭之前的数据服务器
+      if (this.dataServer) {
+        await this.closeDataServer();
+      }
+      
+      // 创建新的数据服务器
       this.dataServer = socket.constructTCPSocketServerInstance();
+      this.dataSocket = null;
+      
+      // 使用下一个可用端口（动态分配）- 范围 50000-60000
+      FtpConnection.nextPassivePort++;
+      if (FtpConnection.nextPassivePort > 60000) {
+        FtpConnection.nextPassivePort = 50000;
+      }
+      this.dataPort = FtpConnection.nextPassivePort;
       
       return new Promise<socket.TCPSocketConnection | null>((resolve) => {
         if (this.dataServer) {
@@ -109,13 +151,17 @@ export class FtpConnection extends EventEmitter {
             resolve(null);
           });
 
-          // 绑定到一个随机端口
+          // 绑定到端口
           const address: socket.NetAddress = {
-            address: '',
-            port: 0
+            address: '0.0.0.0',
+            port: this.dataPort
           };
+          
           this.dataServer.listen(address).then(() => {
-            this.logger.debug(`Data server started`);
+            this.passiveAddress = '0.0.0.0';
+            this.logger.debug(`Data server started on port ${this.dataPort}`);
+            // 监听成功后立即返回null，表示服务器已就绪
+            resolve(null);
           }).catch((error: Error) => {
             this.logger.error(`Failed to start data server: ${error.message}`);
             resolve(null);
@@ -137,6 +183,28 @@ export class FtpConnection extends EventEmitter {
 
   getPassiveModePort(): number {
     return this.dataPort;
+  }
+
+  getPassiveModeAddress(): string {
+    return this.passiveAddress;
+  }
+
+  // 等待客户端连接到数据服务器
+  async waitForDataConnection(timeoutMs: number = 30000): Promise<socket.TCPSocketConnection | null> {
+    const startTime = Date.now();
+    
+    while (!this.dataSocket) {
+      if (Date.now() - startTime > timeoutMs) {
+        this.logger.error('Data connection timeout');
+        return null;
+      }
+      // 等待一小段时间
+      await new Promise<void>((resolve) => {
+        setTimeout(() => resolve(), 100);
+      });
+    }
+    
+    return this.dataSocket;
   }
 
   async closeDataServer(): Promise<void> {

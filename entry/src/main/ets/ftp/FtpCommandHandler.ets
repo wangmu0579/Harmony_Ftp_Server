@@ -2,7 +2,7 @@ import { FtpConnection } from './FtpConnection';
 import { FtpFileSystem } from './FtpFileSystem';
 import net from '@ohos.net.socket';
 import socket from '@ohos.net.socket';
-
+import { fileIo } from '@kit.CoreFileKit'
 
 export class FtpCommandHandler {
   private connection: FtpConnection;
@@ -106,20 +106,27 @@ export class FtpCommandHandler {
     }
 
     try {
-      const dataSocket = await this.connection.openDataConnection();
-      if (!dataSocket) {
-        this.connection.sendResponse(425, 'Can\'t open data connection');
-        return;
-      }
+      // 先启动数据服务器监听
+      await this.connection.openDataConnection();
 
       this.connection.sendResponse(150, 'Opening ASCII mode data connection for file list');
       
+      // 等待客户端连接到数据服务器
+      const dataSocket = await this.connection.waitForDataConnection();
+      if (!dataSocket) {
+          this.connection.sendResponse(425, 'Can\'t open data connection');
+        return;
+      }
+
       const fileList = await this.fileSystem.listFiles(path || this.connection.getCurrentDirectory());
-      dataSocket.send({ data: fileList });
+      
+      // 发送文件列表数据
+      await this.connection.sendData(fileList);
       await this.connection.closeDataConnection();
       
       this.connection.sendResponse(226, 'Transfer complete');
     } catch (error) {
+      console.error('Error handling LIST command:', error);
       this.connection.sendResponse(550, 'Failed to list files');
     }
   }
@@ -131,20 +138,27 @@ export class FtpCommandHandler {
     }
 
     try {
-      const dataSocket = await this.connection.openDataConnection();
+      // 先启动数据服务器监听
+      await this.connection.openDataConnection();
+      
+      this.connection.sendResponse(150, 'Opening ASCII mode data connection for file list');
+      
+      // 等待客户端连接到数据服务器
+      const dataSocket = await this.connection.waitForDataConnection();
       if (!dataSocket) {
         this.connection.sendResponse(425, 'Can\'t open data connection');
         return;
       }
-
-      this.connection.sendResponse(150, 'Opening ASCII mode data connection for file list');
       
       const fileList = await this.fileSystem.listFileNames(path || this.connection.getCurrentDirectory());
-      dataSocket.send({ data: fileList });
+      
+      // 发送文件列表数据
+      await this.connection.sendData(fileList);
       await this.connection.closeDataConnection();
       
       this.connection.sendResponse(226, 'Transfer complete');
     } catch (error) {
+      console.error('Error handling NLST command:', error);
       this.connection.sendResponse(550, 'Failed to list files');
     }
   }
@@ -156,21 +170,26 @@ export class FtpCommandHandler {
     }
 
     try {
-      const dataSocket = await this.connection.openDataConnection();
+      // 先启动数据服务器监听
+      await this.connection.openDataConnection();
+      
+      this.connection.sendResponse(150, 'Opening BINARY mode data connection for file transfer');
+      
+      // 等待客户端连接到数据服务器
+      const dataSocket = await this.connection.waitForDataConnection();
       if (!dataSocket) {
         this.connection.sendResponse(425, 'Can\'t open data connection');
         return;
       }
-
-      this.connection.sendResponse(150, 'Opening BINARY mode data connection for file transfer');
       
       const filePath = `${this.connection.getCurrentDirectory()}/${filename}`;
       const fileData = await this.fileSystem.readFile(filePath);
-      dataSocket.send({ data: fileData });
+      await this.connection.sendData(fileData);
       await this.connection.closeDataConnection();
       
       this.connection.sendResponse(226, 'Transfer complete');
     } catch (error) {
+      console.error('Error handling RETR command:', error);
       this.connection.sendResponse(550, 'Failed to retrieve file');
     }
   }
@@ -182,26 +201,37 @@ export class FtpCommandHandler {
     }
 
     try {
-      const dataSocket = await this.connection.openDataConnection();
+      // 先启动数据服务器监听
+      console.info('[FTP] STOR: Opening data connection for file:', filename);
+      await this.connection.openDataConnection();
+      
+      this.connection.sendResponse(150, 'Opening BINARY mode data connection for file transfer');
+      
+      // 等待客户端连接到数据服务器
+      const dataSocket = await this.connection.waitForDataConnection();
       if (!dataSocket) {
+        console.error('[FTP] STOR: Data connection timeout');
         this.connection.sendResponse(425, 'Can\'t open data connection');
         return;
       }
-
-      this.connection.sendResponse(150, 'Opening BINARY mode data connection for file transfer');
       
+      console.info('[FTP] STOR: Data connection established, reading file data...');
       // 实现从数据连接读取文件数据的逻辑
       const fileData = await this.readDataFromSocket(dataSocket);
+      
+      console.info('[FTP] STOR: Received', fileData.byteLength, 'bytes, writing to:', filename);
 
       // 将读取的数据写入文件
       const filePath = `${this.connection.getCurrentDirectory()}/${filename}`;
+      console.info('[FTP] STOR: Full path:', filePath);
       await this.fileSystem.writeFile(filePath, fileData);
 
       await this.connection.closeDataConnection();
 
       this.connection.sendResponse(226, 'Transfer complete');
+      console.info('[FTP] STOR: File stored successfully');
     } catch (error) {
-      console.error('Error handling STOR command:', error);
+      console.error('[FTP] STOR error:', error);
       this.connection.sendResponse(550, 'Failed to store file');
     }
   }
@@ -211,6 +241,26 @@ export class FtpCommandHandler {
     return new Promise<ArrayBuffer>((resolve, reject) => {
       let dataChunks: ArrayBuffer[] = [];
       let totalSize = 0;
+      
+      // 设置超时 - 30秒
+      const timeoutId = setTimeout(() => {
+        console.error('[FTP] readDataFromSocket: Timeout waiting for data');
+        // 即使超时也返回已接收的数据
+        if (dataChunks.length > 0) {
+          const result = new ArrayBuffer(totalSize);
+          const resultView = new Uint8Array(result);
+          let offset = 0;
+          for (const chunk of dataChunks) {
+            const chunkView = new Uint8Array(chunk);
+            resultView.set(chunkView, offset);
+            offset += chunk.byteLength;
+          }
+          console.info('[FTP] readDataFromSocket: Timeout but returning', totalSize, 'bytes');
+          resolve(result);
+        } else {
+          reject(new Error('Timeout waiting for data'));
+        }
+      }, 30000);
 
       // 监听消息
       dataSocket.on('message', (messageInfo: socket.SocketMessageInfo) => {
@@ -219,17 +269,25 @@ export class FtpCommandHandler {
           if (data && data.byteLength > 0) {
             dataChunks.push(data);
             totalSize += data.byteLength;
+            console.info('[FTP] readDataFromSocket: Received chunk,', data.byteLength, 'bytes, total:', totalSize);
           }
         } catch (error) {
-          console.error('Error receiving data:', error);
+          console.error('[FTP] Error receiving data:', error);
+          clearTimeout(timeoutId);
           reject(new Error('Failed to receive data'));
         }
       });
 
       // 监听连接关闭
       dataSocket.on('close', () => {
+        clearTimeout(timeoutId);
+        console.info('[FTP] readDataFromSocket: Connection closed, total received:', totalSize);
         try {
           // 合并所有数据块
+          if (totalSize === 0) {
+            resolve(new ArrayBuffer(0));
+            return;
+          }
           const result = new ArrayBuffer(totalSize);
           const resultView = new Uint8Array(result);
           let offset = 0;
@@ -242,21 +300,17 @@ export class FtpCommandHandler {
 
           resolve(result);
         } catch (error) {
-          console.error('Error processing received data:', error);
+          console.error('[FTP] Error processing received data:', error);
           reject(new Error('Failed to process received data'));
         }
       });
 
       // 监听错误
       dataSocket.on('error', (error: Error) => {
-        console.error('Socket error:', error);
+        clearTimeout(timeoutId);
+        console.error('[FTP] Socket error:', error);
         reject(new Error('Socket error during data transfer'));
       });
-
-      // 设置超时
-      setTimeout(() => {
-        reject(new Error('Data transfer timeout'));
-      }, 300000); // 5分钟超时
     });
   }
 
@@ -367,15 +421,29 @@ export class FtpCommandHandler {
 
   private handlePASV(): void {
     // 实现被动模式逻辑
-    // 这里需要获取本地IP地址
-    const ip = '127,0,0,1'; // 简化实现，使用localhost
-    const port = this.connection.getPassiveModePort() || 20;
-    
-    // 将端口转换为两个字节
-    const p1 = Math.floor(port / 256);
-    const p2 = port % 256;
-    
-    this.connection.sendResponse(227, `Entering Passive Mode (${ip},${p1},${p2})`);
+    // 打开数据连接获取实际端口
+    console.info('[FTP] PASV command received, opening data connection...');
+    this.connection.openDataConnection().then((dataSocket) => {
+      // 监听成功后，服务器已就绪，等待客户端连接数据端口
+      const port = this.connection.getPassiveModePort();
+      console.info('[FTP] PASV data server started on port:', port);
+      // 从配置中获取服务器IP地址
+      const config = this.connection.getConfig();
+      //const serverIp = config.serverIp || '127.0.0.1';
+      const serverIp =  '127.0.0.1';
+      // 将IP地址转换为逗号分隔格式
+      const ipParts = serverIp.split('.');
+      const ip = ipParts.join(',');
+      
+      // 将端口转换为两个字节
+      const p1 = Math.floor(port / 256);
+      const p2 = port % 256;
+      
+      console.info('[FTP] Sending PASV response with port:', port, 'p1:', p1, 'p2:', p2);
+      this.connection.sendResponse(227, `Entering Passive Mode (${ip},${p1},${p2})`);
+    }).catch(() => {
+      this.connection.sendResponse(425, 'Can\'t open data connection');
+    });
   }
 
   private handleQUIT(): void {
@@ -388,8 +456,10 @@ export class FtpCommandHandler {
   }
 
   private handleFEAT(): void {
+    // FTP多行响应格式：211-Features 然后是特性列表 最后以211 End结束
     this.connection.sendResponse(211, 'Features:');
-    this.connection.sendResponse(211, ' UTF8');
-    this.connection.sendResponse(211, ' End');
+    this.connection.sendResponseLine(' SIZE');
+    this.connection.sendResponseLine(' UTF8');
+    this.connection.sendResponse(211, 'End');
   }
 }

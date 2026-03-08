@@ -1,6 +1,8 @@
 import fs from '@ohos.file.fs';
 import { FtpConnection } from './FtpConnection';
 import common from '@ohos.app.ability.common';
+import { fileIo } from '@kit.CoreFileKit'
+import featureAbility from '@ohos.ability.featureAbility';
 
 // 接口定义
 export interface FileEntry {
@@ -21,20 +23,31 @@ export class FtpFileSystem {
 
   constructor(connection: FtpConnection) {
     this.connection = connection;
-    // 获取应用沙箱路径作为FTP根目录
-    try {
-      // 使用全局getContext()函数
-      this.rootPath = getContext().filesDir;
-    } catch (error) {
-      // 如果获取失败，使用默认路径
-      this.rootPath = '/';
+    // 从配置中获取FTP根目录
+    const config = connection.getConfig();
+    this.rootPath = config.rootDirectory;
+    console.info('[FTP] FtpFileSystem constructor: rootDirectory from config:', this.rootPath);
+    
+    // 如果配置目录为空或不可访问，使用默认目录
+    if (!this.rootPath || this.rootPath === '/') {
+      try {
+        const context = getContext();
+        this.rootPath = context.filesDir;
+        console.info('[FTP] Using default filesDir:', this.rootPath);
+      } catch (e) {
+        this.rootPath = '/';
+      }
     }
   }
 
   async listFiles(path: string): Promise<string> {
     try {
       const fullPath = this.getFullPath(path);
+
+      // 先打开目录获取文件描述符
       const files = await this.getFilesInDirectory(fullPath);
+      console.info('[FTP] listFiles: got', files.length, 'files');
+
       let result = '';
       
       for (const file of files) {
@@ -44,6 +57,7 @@ export class FtpFileSystem {
       
       return result;
     } catch (error) {
+      console.error('[FTP] listFiles error:', error);
       throw new Error('Failed to list files');
     }
   }
@@ -59,19 +73,41 @@ export class FtpFileSystem {
   }
 
   async getFilesInDirectory(path: string): Promise<FileEntry[]> {
+    console.info('[FTP] getFilesInDirectory: Listing files in:', path);
     try {
-      // 使用listFile替代readDir
+      // 先检查目录是否存在
+      try {
+        const dirStat = await fs.stat(path);
+        console.info('[FTP] getFilesInDirectory: Directory exists, isDirectory:', dirStat.isDirectory());
+      } catch (statError) {
+        console.error('[FTP] getFilesInDirectory: Directory does not exist or not accessible:', statError);
+      }
+      
+      // 使用listFile列出文件
       const entries: string[] = await fs.listFile(path);
+      console.info('[FTP] getFilesInDirectory: Found', entries.length, 'entries');
+      
       const result: FileEntry[] = [];
       for (let i = 0; i < entries.length; i++) {
         const entryName: string = entries[i];
+        const entryPath = `${path}/${entryName}`;
+        
+        // 检查是文件还是目录
+        try {
+          const stat = await fs.stat(entryPath);
+          console.info('[FTP] getFilesInDirectory: Entry:', entryName, 'isDirectory:', stat.isDirectory());
+        } catch (entryStatError) {
+          console.error('[FTP] getFilesInDirectory: Cannot stat entry:', entryName, entryStatError);
+        }
+        
         result.push({
           name: entryName,
-          path: `${path}/${entryName}`
+          path: entryPath
         });
       }
       return result;
     } catch (error) {
+      console.error('[FTP] getFilesInDirectory error:', error);
       // 如果目录不存在，返回空数组
       return [];
     }
@@ -123,12 +159,15 @@ export class FtpFileSystem {
   async writeFile(path: string, data: ArrayBuffer): Promise<void> {
     try {
       const fullPath = this.getFullPath(path);
+      console.info('[FTP] writeFile: Writing to fullPath:', fullPath, 'size:', data.byteLength);
       // 确保目录存在
       await this.ensureDirectoryExists(fullPath.substring(0, fullPath.lastIndexOf('/')));
       const file = await fs.open(fullPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
       await fs.write(file.fd, data);
       await fs.close(file.fd);
+      console.info('[FTP] writeFile: Success');
     } catch (error) {
+      console.error('[FTP] writeFile error:', error);
       throw new Error('Failed to write file');
     }
   }

@@ -19,6 +19,14 @@
     {
       "name": "permission_internet",
       "value": "Needed for FTP server network operations"
+    },
+    {
+      "name": "permission_read_media",
+      "value": "Needed to read files for FTP transfer"
+    },
+    {
+      "name": "permission_write_media",
+      "value": "Needed to write files for FTP transfer"
     }
   ]
 }
