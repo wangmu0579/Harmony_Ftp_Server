@@ -4,21 +4,10 @@ import { FtpLogger } from './FtpLogger';
 import { FtpCommandHandler } from './FtpCommandHandler';
 import { EventEmitter } from './EventEmitter';
 
-// 定义接口
-export interface Address {
-  port: number;
-}
-
-export interface ServerAddress {
-  port: number;
-}
-
-// 定义数据服务器类型
 export type DataServer = socket.TCPSocketServer;
 
 export class FtpConnection extends EventEmitter {
   private clientSocket: socket.TCPSocketConnection;
-  private dataSocket: socket.TCPSocketConnection | null = null;
   private config: FtpConfig;
   private logger: FtpLogger;
   private commandHandler: FtpCommandHandler;
@@ -26,6 +15,19 @@ export class FtpConnection extends EventEmitter {
   private currentUser: string = '';
   private currentDirectory: string = '/';
   private isActive: boolean = true;
+  private transferType: string = 'A'; // A=ASCII, I=Binary
+
+  // 被动模式数据连接
+  private dataServer: DataServer | null = null;
+  private dataSocket: socket.TCPSocketConnection | null = null;
+  private dataPort: number = 0;
+  private static nextPassivePort: number = 50000;
+
+  // 断点续传偏移
+  private restOffset: number = 0;
+
+  // 重命名源路径
+  private renameFrom: string = '';
 
   constructor(clientSocket: socket.TCPSocketConnection, config: FtpConfig, logger: FtpLogger) {
     super();
@@ -37,11 +39,10 @@ export class FtpConnection extends EventEmitter {
 
   start(): void {
     try {
-      this.sendResponse(220, 'FTP Server ready');
-      this.logger.info('FTP Server ready for commands');
-      
-      this.clientSocket.on('message', async (messageInfo: socket.SocketMessageInfo) => {
-        await this.handleData(messageInfo.message);
+      this.sendResponse(220, 'HarmonyOS FTP Server ready');
+
+      this.clientSocket.on('message', async (info: socket.SocketMessageInfo) => {
+        await this.handleData(info.message);
       });
 
       this.clientSocket.on('error', (error: Error) => {
@@ -50,27 +51,33 @@ export class FtpConnection extends EventEmitter {
       });
 
       this.clientSocket.on('close', () => {
-        this.logger.info('Client connection closed');
+        this.logger.info('Client disconnected');
         this.close();
       });
     } catch (error) {
-      this.logger.error(`Error starting connection handling: ${error}`);
+      this.logger.error(`Error starting connection: ${error}`);
       this.close();
     }
   }
 
   private async handleData(data: ArrayBuffer): Promise<void> {
     try {
-      const uint8Array = new Uint8Array(data);
-      let command = '';
-      for (let i = 0; i < uint8Array.length; i++) {
-        command += String.fromCharCode(uint8Array[i]);
+      const bytes = new Uint8Array(data);
+      let text = '';
+      for (let i = 0; i < bytes.length; i++) {
+        text += String.fromCharCode(bytes[i]);
       }
-      command = command.trim();
-      this.logger.debug(`Received command: ${command}`);
-      await this.commandHandler.handleCommand(command);
+      // FTP 可能一次收到多条命令（以 \r\n 分隔）
+      const lines = text.split('\r\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.length > 0) {
+          this.logger.debug(`<< ${trimmed}`);
+          await this.commandHandler.handleCommand(trimmed);
+        }
+      }
     } catch (error) {
-      this.logger.error(`Error handling command data: ${error}`);
+      this.logger.error(`Error handling data: ${error}`);
       this.sendResponse(500, 'Internal server error');
     }
   }
@@ -78,220 +85,169 @@ export class FtpConnection extends EventEmitter {
   sendResponse(code: number, message: string): void {
     try {
       const response = `${code} ${message}\r\n`;
-      this.logger.debug(`Sending response: ${response.trim()}`);
+      this.logger.debug(`>> ${response.trim()}`);
       this.clientSocket.send({ data: response });
     } catch (error) {
       this.logger.error(`Error sending response: ${error}`);
-      // If we can't send a response, the connection is probably broken
-      this.close();
     }
   }
 
-  // 用于发送多行响应的中间行（不带状态码，以空格开头）
-  sendResponseLine(message: string): void {
+  // 多行响应的中间行：格式 "code-text"
+  sendMultiLineBegin(code: number, message: string): void {
+    try {
+      this.clientSocket.send({ data: `${code}-${message}\r\n` });
+    } catch (error) {
+      this.logger.error(`Error sending multi-line begin: ${error}`);
+    }
+  }
+
+  // 多行响应的特性行：以空格开头
+  sendMultiLineLine(message: string): void {
     try {
       this.clientSocket.send({ data: ` ${message}\r\n` });
     } catch (error) {
-      this.logger.error(`Error sending response line: ${error}`);
+      this.logger.error(`Error sending multi-line: ${error}`);
     }
+  }
+
+  // 多行响应的结束行：格式 "code text"
+  sendMultiLineEnd(code: number, message: string): void {
+    this.sendResponse(code, message);
   }
 
   async sendData(data: string | ArrayBuffer): Promise<void> {
-    if (this.dataSocket) {
-      try {
-        await this.dataSocket.send({ data: data });
-      } catch (error) {
-        this.logger.error(`Error sending data: ${error}`);
-       // throw error;
-      }
-    } else {
-      throw new Error('No data socket available');
+    if (!this.dataSocket) {
+      throw new Error('No data connection');
     }
+    await this.dataSocket.send({ data });
   }
 
-  private dataPort: number = 0;
-  private dataServer: DataServer | null = null;
-  private activeModeAddress: string = '';
-  private activeModePort: number = 0;
-  private passiveAddress: string = '';
-  private static nextPassivePort: number = 50000;
+  // 打开被动模式数据监听
+  async openPassiveDataServer(): Promise<number> {
+    await this.closeDataConnection();
 
-  async openDataConnection(): Promise<socket.TCPSocketConnection | null> {
-    try {
-      // 如果已经有数据服务器在监听，直接返回
-      if (this.dataServer && !this.dataSocket) {
-        return null; // 服务器已就绪，等待客户端连接
-      }
-      
-      // 关闭之前的数据服务器
-      if (this.dataServer) {
-        await this.closeDataServer();
-      }
-      
-      // 创建新的数据服务器
-      this.dataServer = socket.constructTCPSocketServerInstance();
-      this.dataSocket = null;
-      
-      // 使用下一个可用端口（动态分配）- 范围 50000-60000
-      FtpConnection.nextPassivePort++;
-      if (FtpConnection.nextPassivePort > 60000) {
-        FtpConnection.nextPassivePort = 50000;
-      }
-      this.dataPort = FtpConnection.nextPassivePort;
-      
-      return new Promise<socket.TCPSocketConnection | null>((resolve) => {
-        if (this.dataServer) {
-          this.dataServer.on('connect', (data: socket.TCPSocketConnection) => {
-            this.dataSocket = data;
-            resolve(data);
-          });
+    this.dataServer = socket.constructTCPSocketServerInstance();
 
-          this.dataServer.on('error', (error: Error) => {
-            this.logger.error(`Data server error: ${error.message}`);
-            resolve(null);
-          });
-
-          // 绑定到端口
-          const address: socket.NetAddress = {
-            address: '0.0.0.0',
-            port: this.dataPort
-          };
-          
-          this.dataServer.listen(address).then(() => {
-            this.passiveAddress = '0.0.0.0';
-            this.logger.debug(`Data server started on port ${this.dataPort}`);
-            // 监听成功后立即返回null，表示服务器已就绪
-            resolve(null);
-          }).catch((error: Error) => {
-            this.logger.error(`Failed to start data server: ${error.message}`);
-            resolve(null);
-          });
-        } else {
-          resolve(null);
-        }
-      });
-    } catch (error) {
-      this.logger.error(`Failed to open data connection: ${error}`);
-      return null;
+    // 端口分配
+    FtpConnection.nextPassivePort++;
+    if (FtpConnection.nextPassivePort > this.config.passivePortMax) {
+      FtpConnection.nextPassivePort = this.config.passivePortMin;
     }
-  }
+    this.dataPort = FtpConnection.nextPassivePort;
 
-  setActiveModeAddress(address: string, port: number): void {
-    this.activeModeAddress = address;
-    this.activeModePort = port;
-  }
+    // 设置连接回调
+    this.dataServer.on('connect', (conn: socket.TCPSocketConnection) => {
+      this.dataSocket = conn;
+    });
 
-  getPassiveModePort(): number {
+    const addr: socket.NetAddress = { address: '0.0.0.0', port: this.dataPort };
+    await this.dataServer.listen(addr);
+    this.logger.debug(`Passive data server on port ${this.dataPort}`);
     return this.dataPort;
   }
 
-  getPassiveModeAddress(): string {
-    return this.passiveAddress;
-  }
-
-  // 等待客户端连接到数据服务器
-  async waitForDataConnection(timeoutMs: number = 30000): Promise<socket.TCPSocketConnection | null> {
-    const startTime = Date.now();
-    
+  // 等待客户端连接到被动数据端口
+  async waitForDataConnection(timeoutMs: number = 30000): Promise<boolean> {
+    const start = Date.now();
     while (!this.dataSocket) {
-      if (Date.now() - startTime > timeoutMs) {
+      if (Date.now() - start > timeoutMs) {
         this.logger.error('Data connection timeout');
-        return null;
+        return false;
       }
-      // 等待一小段时间
-      await new Promise<void>((resolve) => {
-        setTimeout(() => resolve(), 100);
-      });
+      await new Promise<void>(resolve => setTimeout(resolve, 50));
     }
-    
-    return this.dataSocket;
+    return true;
   }
 
-  async closeDataServer(): Promise<void> {
-    if (this.dataServer) {
-      try {
-        await this.dataServer.close();
-      } catch (error) {
-        this.logger.error(`Error closing data server: ${error}`);
-      }
-      this.dataServer = null;
+  // 从数据连接读取所有数据（用于 STOR/APPE）
+  async readAllDataFromSocket(): Promise<ArrayBuffer> {
+    if (!this.dataSocket) throw new Error('No data connection');
+    const ds = this.dataSocket;
+
+    return new Promise<ArrayBuffer>((resolve, reject) => {
+      const chunks: ArrayBuffer[] = [];
+      let totalSize = 0;
+
+      const timer = setTimeout(() => {
+        if (chunks.length > 0) {
+          resolve(this.mergeBuffers(chunks, totalSize));
+        } else {
+          reject(new Error('Data receive timeout'));
+        }
+      }, 30000);
+
+      ds.on('message', (info: socket.SocketMessageInfo) => {
+        if (info.message && info.message.byteLength > 0) {
+          chunks.push(info.message);
+          totalSize += info.message.byteLength;
+        }
+      });
+
+      ds.on('close', () => {
+        clearTimeout(timer);
+        resolve(this.mergeBuffers(chunks, totalSize));
+      });
+
+      ds.on('error', (err: Error) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+    });
+  }
+
+  private mergeBuffers(chunks: ArrayBuffer[], totalSize: number): ArrayBuffer {
+    if (totalSize === 0) return new ArrayBuffer(0);
+    const result = new ArrayBuffer(totalSize);
+    const view = new Uint8Array(result);
+    let offset = 0;
+    for (const chunk of chunks) {
+      view.set(new Uint8Array(chunk), offset);
+      offset += chunk.byteLength;
     }
+    return result;
   }
 
   async closeDataConnection(): Promise<void> {
     if (this.dataSocket) {
-      try {
-        await this.dataSocket.close();
-      } catch (error) {
-        this.logger.error(`Error closing data socket: ${error}`);
-      }
+      try { await this.dataSocket.close(); } catch (e) { /* ignore */ }
       this.dataSocket = null;
     }
-    await this.closeDataServer();
+    if (this.dataServer) {
+      try { await this.dataServer.close(); } catch (e) { /* ignore */ }
+      this.dataServer = null;
+    }
   }
 
   async close(): Promise<void> {
-    if (!this.isActive) {
-      this.logger.debug('Attempting to close already closed connection');
-      return;
-    }
-
+    if (!this.isActive) return;
     this.isActive = false;
-    this.logger.info('Closing FTP connection...');
-
-    // Close data connection first
-    try {
-      await this.closeDataConnection();
-    } catch (error) {
-      this.logger.error(`Error closing data connection: ${error}`);
-    }
-    
-    // Close control connection
-    try {
-      await this.clientSocket.close();
-      this.logger.info('Control connection closed');
-    } catch (error) {
-      this.logger.error(`Error closing control connection: ${error}`);
-    }
-
+    await this.closeDataConnection();
+    try { await this.clientSocket.close(); } catch (e) { /* ignore */ }
     this.emit('close');
-    this.logger.info('FTP connection closed completely');
   }
 
-  // Getters and setters
-  getConfig(): FtpConfig {
-    return this.config;
-  }
+  // Getters / Setters
+  getConfig(): FtpConfig { return this.config; }
+  getLogger(): FtpLogger { return this.logger; }
+  getDataPort(): number { return this.dataPort; }
 
-  getLogger(): FtpLogger {
-    return this.logger;
-  }
+  isUserAuthenticated(): boolean { return this.isAuthenticated; }
+  setAuthenticated(v: boolean): void { this.isAuthenticated = v; }
 
-  isUserAuthenticated(): boolean {
-    return this.isAuthenticated;
-  }
+  getCurrentUser(): string { return this.currentUser; }
+  setCurrentUser(u: string): void { this.currentUser = u; }
 
-  setAuthenticated(authenticated: boolean): void {
-    this.isAuthenticated = authenticated;
-  }
+  getCurrentDirectory(): string { return this.currentDirectory; }
+  setCurrentDirectory(d: string): void { this.currentDirectory = d; }
 
-  setCurrentUser(user: string): void {
-    this.currentUser = user;
-  }
+  getTransferType(): string { return this.transferType; }
+  setTransferType(t: string): void { this.transferType = t; }
 
-  getCurrentUser(): string {
-    return this.currentUser;
-  }
+  getRestOffset(): number { return this.restOffset; }
+  setRestOffset(o: number): void { this.restOffset = o; }
 
-  getCurrentDirectory(): string {
-    return this.currentDirectory;
-  }
+  getRenameFrom(): string { return this.renameFrom; }
+  setRenameFrom(p: string): void { this.renameFrom = p; }
 
-  setCurrentDirectory(directory: string): void {
-    this.currentDirectory = directory;
-  }
-
-  isConnectionActive(): boolean {
-    return this.isActive;
-  }
+  isConnectionActive(): boolean { return this.isActive; }
 }

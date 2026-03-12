@@ -1,5 +1,5 @@
 import socket from '@ohos.net.socket';
-import { FtpConnection, Address, DataServer } from './FtpConnection';
+import { FtpConnection } from './FtpConnection';
 import { FtpConfig } from './FtpConfig';
 import { FtpLogger } from './FtpLogger';
 
@@ -10,102 +10,73 @@ export interface ServerStatus {
 }
 
 export class FtpServer {
-  private serverSocket: DataServer | null = null;
+  private serverSocket: socket.TCPSocketServer | null = null;
   private connections: FtpConnection[] = [];
   private config: FtpConfig;
   private logger: FtpLogger;
   private isRunning: boolean = false;
 
-  constructor(config: FtpConfig) {
+  constructor(config: FtpConfig, logger: FtpLogger) {
     this.config = config;
-    this.logger = new FtpLogger();
+    this.logger = logger;
   }
 
   async start(): Promise<boolean> {
     try {
       this.serverSocket = socket.constructTCPSocketServerInstance();
-      
-      if (this.serverSocket) {
-        this.serverSocket.on('connect', (data: socket.TCPSocketConnection) => {
-          this.handleNewConnection(data);
-        });
 
-        this.serverSocket.on('error', (error: Error) => {
-          this.logger.error(`Server error: ${error.message}`);
-        });
+      this.serverSocket.on('connect', (conn: socket.TCPSocketConnection) => {
+        this.handleNewConnection(conn);
+      });
 
-        const address: socket.NetAddress = {
-          address: '0.0.0.0',
-          port: this.config.port
-        };
-        await this.serverSocket.listen(address);
-        
-        this.isRunning = true;
-        this.logger.info(`FTP Server started on port ${this.config.port}`);
-        return true;
-      } else {
-        this.logger.error('Failed to create server socket');
-        return false;
-      }
+      this.serverSocket.on('error', (error: Error) => {
+        this.logger.error(`Server error: ${error.message}`);
+      });
+
+      const addr: socket.NetAddress = { address: '0.0.0.0', port: this.config.port };
+      await this.serverSocket.listen(addr);
+
+      this.isRunning = true;
+      this.logger.info(`FTP Server started on port ${this.config.port}`);
+      return true;
     } catch (error) {
-      this.logger.error(`Failed to start server: ${error}`);
+      this.logger.error(`Failed to start: ${error}`);
       this.isRunning = false;
       return false;
     }
   }
 
-  private handleNewConnection(clientSocket: socket.TCPSocketConnection) {
-    try {
-      this.logger.info('New client connection received');
-      const connection = new FtpConnection(clientSocket, this.config, this.logger);
-      this.connections.push(connection);
-      
-      connection.on('close', () => {
-        this.connections = this.connections.filter(conn => conn !== connection);
-        this.logger.info(`Client connection closed. Current connections: ${this.connections.length}`);
-      });
-
-      connection.start();
-    } catch (error) {
-      this.logger.error(`Error handling new connection: ${error}`);
-      try {
-        clientSocket.close();
-      } catch (closeError) {
-        // Ignore close error
-      }
-    }
-  }
-
-  async stop(): Promise<void> {
-    if (!this.isRunning) {
-      this.logger.warn('Attempting to stop server that is not running');
+  private handleNewConnection(clientSocket: socket.TCPSocketConnection): void {
+    if (this.connections.length >= this.config.maxConnections) {
+      this.logger.warn('Max connections reached, rejecting');
+      try { clientSocket.close(); } catch (e) { /* ignore */ }
       return;
     }
 
-    this.isRunning = false;
-    this.logger.info('Stopping FTP Server...');
+    this.logger.info(`New connection (total: ${this.connections.length + 1})`);
+    const conn = new FtpConnection(clientSocket, this.config, this.logger);
+    this.connections.push(conn);
 
-    // Close all connections
-    this.logger.info(`Closing ${this.connections.length} active connections`);
-    for (let i = 0; i < this.connections.length; i++) {
-      const connection = this.connections[i];
-      try {
-        await connection.close();
-      } catch (error) {
-        this.logger.error(`Error closing connection: ${error}`);
-      }
+    conn.on('close', () => {
+      this.connections = this.connections.filter(c => c !== conn);
+      this.logger.info(`Connection closed (remaining: ${this.connections.length})`);
+    });
+
+    conn.start();
+  }
+
+  async stop(): Promise<void> {
+    if (!this.isRunning) return;
+    this.isRunning = false;
+
+    for (const conn of this.connections) {
+      try { await conn.close(); } catch (e) { /* ignore */ }
     }
     this.connections = [];
 
-    // Close server socket
     if (this.serverSocket) {
-      try {
-        await this.serverSocket.close();
-        this.serverSocket = null;
-        this.logger.info('Server socket closed');
-      } catch (error) {
-        this.logger.error(`Error closing server socket: ${error}`);
-      }
+      try { await this.serverSocket.close(); } catch (e) { /* ignore */ }
+      this.serverSocket = null;
     }
 
     this.logger.info('FTP Server stopped');

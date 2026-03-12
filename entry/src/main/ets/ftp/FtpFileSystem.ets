@@ -1,10 +1,6 @@
 import fs from '@ohos.file.fs';
 import { FtpConnection } from './FtpConnection';
-import common from '@ohos.app.ability.common';
-import { fileIo } from '@kit.CoreFileKit'
-import featureAbility from '@ohos.ability.featureAbility';
 
-// 接口定义
 export interface FileEntry {
   name: string;
   path: string;
@@ -23,92 +19,82 @@ export class FtpFileSystem {
 
   constructor(connection: FtpConnection) {
     this.connection = connection;
-    // 从配置中获取FTP根目录
     const config = connection.getConfig();
     this.rootPath = config.rootDirectory;
-    console.info('[FTP] FtpFileSystem constructor: rootDirectory from config:', this.rootPath);
-    
-    // 如果配置目录为空或不可访问，使用默认目录
     if (!this.rootPath || this.rootPath === '/') {
       try {
-        const context = getContext();
-        this.rootPath = context.filesDir;
-        console.info('[FTP] Using default filesDir:', this.rootPath);
+        this.rootPath = getContext().filesDir;
       } catch (e) {
         this.rootPath = '/';
       }
     }
   }
 
-  async listFiles(path: string): Promise<string> {
-    try {
-      const fullPath = this.getFullPath(path);
-
-      // 先打开目录获取文件描述符
-      const files = await this.getFilesInDirectory(fullPath);
-      console.info('[FTP] listFiles: got', files.length, 'files');
-
-      let result = '';
-      
-      for (const file of files) {
-        const fileInfo = await this.getFileInfo(file);
-        result += `${fileInfo.type === 'directory' ? 'd' : '-'}rwxrwxrwx 1 ftp ftp ${fileInfo.size} ${this.formatDate(fileInfo.modifiedTime)} ${fileInfo.name}\r\n`;
-      }
-      
-      return result;
-    } catch (error) {
-      console.error('[FTP] listFiles error:', error);
-      throw new Error('Failed to list files');
+  // 将 FTP 虚拟路径解析为真实文件系统路径
+  resolvePath(ftpPath: string): string {
+    if (!ftpPath || ftpPath === '/') {
+      return this.rootPath;
     }
+    // 绝对路径
+    if (ftpPath.startsWith('/')) {
+      const normalized = this.normalizePath(ftpPath);
+      if (normalized === '/') return this.rootPath;
+      return `${this.rootPath}${normalized}`;
+    }
+    // 相对路径：基于当前目录
+    const cwd = this.connection.getCurrentDirectory();
+    const combined = cwd === '/' ? `/${ftpPath}` : `${cwd}/${ftpPath}`;
+    const normalized = this.normalizePath(combined);
+    if (normalized === '/') return this.rootPath;
+    return `${this.rootPath}${normalized}`;
   }
 
-  async listFileNames(path: string): Promise<string> {
-    try {
-      const fullPath = this.getFullPath(path);
-      const files = await this.getFilesInDirectory(fullPath);
-      return files.map(file => file.name).join('\r\n') + '\r\n';
-    } catch (error) {
-      throw new Error('Failed to list file names');
+  // 规范化路径，处理 . 和 .. ，防止路径穿越
+  private normalizePath(path: string): string {
+    const parts = path.split('/');
+    const stack: string[] = [];
+    for (const part of parts) {
+      if (part === '' || part === '.') continue;
+      if (part === '..') {
+        if (stack.length > 0) stack.pop();
+      } else {
+        stack.push(part);
+      }
     }
+    return '/' + stack.join('/');
   }
 
-  async getFilesInDirectory(path: string): Promise<FileEntry[]> {
-    console.info('[FTP] getFilesInDirectory: Listing files in:', path);
+  async listFiles(ftpPath: string): Promise<string> {
+    const fullPath = this.resolvePath(ftpPath);
+    const entries = await this.getFilesInDirectory(fullPath);
+    let result = '';
+    for (const entry of entries) {
+      const info = await this.getFileInfo(entry);
+      const perm = info.type === 'directory' ? 'drwxr-xr-x' : '-rw-r--r--';
+      const dateStr = this.formatListDate(info.modifiedTime);
+      const sizeStr = info.size.toString().padStart(13, ' ');
+      result += `${perm}   1 ftp      ftp      ${sizeStr} ${dateStr} ${info.name}\r\n`;
+    }
+    return result;
+  }
+
+  async listFileNames(ftpPath: string): Promise<string> {
+    const fullPath = this.resolvePath(ftpPath);
+    const entries = await this.getFilesInDirectory(fullPath);
+    return entries.map(e => e.name).join('\r\n') + '\r\n';
+  }
+
+  async getFilesInDirectory(realPath: string): Promise<FileEntry[]> {
     try {
-      // 先检查目录是否存在
-      try {
-        const dirStat = await fs.stat(path);
-        console.info('[FTP] getFilesInDirectory: Directory exists, isDirectory:', dirStat.isDirectory());
-      } catch (statError) {
-        console.error('[FTP] getFilesInDirectory: Directory does not exist or not accessible:', statError);
-      }
-      
-      // 使用listFile列出文件
-      const entries: string[] = await fs.listFile(path);
-      console.info('[FTP] getFilesInDirectory: Found', entries.length, 'entries');
-      
+      const names: string[] = await fs.listFile(realPath);
       const result: FileEntry[] = [];
-      for (let i = 0; i < entries.length; i++) {
-        const entryName: string = entries[i];
-        const entryPath = `${path}/${entryName}`;
-        
-        // 检查是文件还是目录
-        try {
-          const stat = await fs.stat(entryPath);
-          console.info('[FTP] getFilesInDirectory: Entry:', entryName, 'isDirectory:', stat.isDirectory());
-        } catch (entryStatError) {
-          console.error('[FTP] getFilesInDirectory: Cannot stat entry:', entryName, entryStatError);
-        }
-        
-        result.push({
-          name: entryName,
-          path: entryPath
-        });
+      for (const name of names) {
+        const entry: FileEntry = { name: name, path: `${realPath}/${name}` };
+        result.push(entry);
       }
       return result;
     } catch (error) {
-      console.error('[FTP] getFilesInDirectory error:', error);
-      // 如果目录不存在，返回空数组
+      console.error('[FTP] listFile error:', error);
       return [];
     }
   }
@@ -119,166 +105,158 @@ export class FtpFileSystem {
       return {
         name: file.name,
         size: stat.size,
-        modifiedTime: new Date(stat.mtime),
+        modifiedTime: new Date(stat.mtime * 1000),
         type: stat.isDirectory() ? 'directory' : 'file'
       };
     } catch (error) {
-      // 如果获取文件信息失败，返回默认值
-      return {
-        name: file.name,
-        size: 0,
-        modifiedTime: new Date(),
-        type: 'file'
-      };
+      return { name: file.name, size: 0, modifiedTime: new Date(), type: 'file' };
     }
   }
 
-  private formatDate(date: Date): string {
-    const month = date.toLocaleString('default', { month: 'short' });
-    const day = date.getDate().toString().padStart(2, ' ');
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
-    
-    return `${month} ${day} ${hours}:${minutes}`;
+  async getFileSize(ftpPath: string): Promise<number> {
+    const fullPath = this.resolvePath(ftpPath);
+    const stat = await fs.stat(fullPath);
+    return stat.size;
   }
 
-  async readFile(path: string): Promise<ArrayBuffer> {
-    try {
-      const fullPath = this.getFullPath(path);
-      const file = await fs.open(fullPath, fs.OpenMode.READ_ONLY);
-      const size = (await fs.stat(fullPath)).size;
-      const buffer = new ArrayBuffer(size);
-      await fs.read(file.fd, buffer);
-      await fs.close(file.fd);
-      return buffer;
-    } catch (error) {
-      throw new Error('Failed to read file');
-    }
+  async getModifiedTime(ftpPath: string): Promise<Date> {
+    const fullPath = this.resolvePath(ftpPath);
+    const stat = await fs.stat(fullPath);
+    return new Date(stat.mtime * 1000);
   }
 
-  async writeFile(path: string, data: ArrayBuffer): Promise<void> {
-    try {
-      const fullPath = this.getFullPath(path);
-      console.info('[FTP] writeFile: Writing to fullPath:', fullPath, 'size:', data.byteLength);
-      // 确保目录存在
-      await this.ensureDirectoryExists(fullPath.substring(0, fullPath.lastIndexOf('/')));
-      const file = await fs.open(fullPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
-      await fs.write(file.fd, data);
-      await fs.close(file.fd);
-      console.info('[FTP] writeFile: Success');
-    } catch (error) {
-      console.error('[FTP] writeFile error:', error);
-      throw new Error('Failed to write file');
-    }
+  async readFile(ftpPath: string): Promise<ArrayBuffer> {
+    const fullPath = this.resolvePath(ftpPath);
+    const fileStat = await fs.stat(fullPath);
+    const file = await fs.open(fullPath, fs.OpenMode.READ_ONLY);
+    const buffer = new ArrayBuffer(fileStat.size);
+    await fs.read(file.fd, buffer);
+    await fs.close(file.fd);
+    return buffer;
   }
 
-  async deleteFile(path: string): Promise<void> {
-    try {
-      const fullPath = this.getFullPath(path);
-      await fs.unlink(fullPath);
-    } catch (error) {
-      throw new Error('Failed to delete file');
-    }
+  async readFileFrom(ftpPath: string, offset: number): Promise<ArrayBuffer> {
+    const fullPath = this.resolvePath(ftpPath);
+    const fileStat = await fs.stat(fullPath);
+    const remaining = fileStat.size - offset;
+    if (remaining <= 0) return new ArrayBuffer(0);
+    const file = await fs.open(fullPath, fs.OpenMode.READ_ONLY);
+    const buffer = new ArrayBuffer(remaining);
+    await fs.read(file.fd, buffer, { offset: offset });
+    await fs.close(file.fd);
+    return buffer;
   }
 
-  async createDirectory(path: string): Promise<void> {
-    try {
-      const fullPath = this.getFullPath(path);
-      // 使用递归方式创建目录
-      await this.createDirectoryRecursive(fullPath);
-    } catch (error) {
-      throw new Error('Failed to create directory');
-    }
+  async writeFile(ftpPath: string, data: ArrayBuffer): Promise<void> {
+    const fullPath = this.resolvePath(ftpPath);
+    await this.ensureParentDir(fullPath);
+    const file = await fs.open(fullPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+    await fs.write(file.fd, data);
+    await fs.close(file.fd);
   }
 
-  async deleteDirectory(path: string): Promise<void> {
-    try {
-      const fullPath = this.getFullPath(path);
-      await this.rmdirRecursive(fullPath);
-    } catch (error) {
-      throw new Error('Failed to delete directory');
-    }
+  async appendFile(ftpPath: string, data: ArrayBuffer): Promise<void> {
+    const fullPath = this.resolvePath(ftpPath);
+    await this.ensureParentDir(fullPath);
+    const file = await fs.open(fullPath, fs.OpenMode.CREATE | fs.OpenMode.APPEND);
+    await fs.write(file.fd, data);
+    await fs.close(file.fd);
   }
 
-  async exists(path: string): Promise<boolean> {
+  async deleteFile(ftpPath: string): Promise<void> {
+    const fullPath = this.resolvePath(ftpPath);
+    await fs.unlink(fullPath);
+  }
+
+  async rename(fromFtpPath: string, toFtpPath: string): Promise<void> {
+    const fromFull = this.resolvePath(fromFtpPath);
+    const toFull = this.resolvePath(toFtpPath);
+    await fs.rename(fromFull, toFull);
+  }
+
+  async createDirectory(ftpPath: string): Promise<void> {
+    const fullPath = this.resolvePath(ftpPath);
+    await this.mkdirRecursive(fullPath);
+  }
+
+  async deleteDirectory(ftpPath: string): Promise<void> {
+    const fullPath = this.resolvePath(ftpPath);
+    await this.rmdirRecursive(fullPath);
+  }
+
+  async exists(ftpPath: string): Promise<boolean> {
     try {
-      const fullPath = this.getFullPath(path);
-      await fs.stat(fullPath);
+      await fs.stat(this.resolvePath(ftpPath));
       return true;
-    } catch (error) {
+    } catch (e) {
       return false;
     }
   }
 
-  async isDirectory(path: string): Promise<boolean> {
+  async isDirectory(ftpPath: string): Promise<boolean> {
     try {
-      const fullPath = this.getFullPath(path);
-      const stat = await fs.stat(fullPath);
+      const stat = await fs.stat(this.resolvePath(ftpPath));
       return stat.isDirectory();
-    } catch (error) {
+    } catch (e) {
       return false;
     }
   }
 
-  private getFullPath(relativePath: string): string {
-    // 处理相对路径，确保使用应用沙箱路径作为根目录
-    if (relativePath === '/') {
-      return this.rootPath;
-    }
-    // 移除开头的斜杠
-    const normalizedPath = relativePath.startsWith('/') ? relativePath.substring(1) : relativePath;
-    return `${this.rootPath}/${normalizedPath}`;
-  }
-
-  private async ensureDirectoryExists(directory: string): Promise<void> {
-    try {
-      await fs.stat(directory);
-    } catch (error) {
-      // 目录不存在，创建它
-      try {
-        await this.createDirectoryRecursive(directory);
-      } catch (mkdirError) {
-        throw new Error('Failed to create directory');
-      }
+  private formatListDate(date: Date): string {
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const now = new Date();
+    const month = months[date.getMonth()];
+    const day = date.getDate().toString().padStart(2, ' ');
+    // 如果是今年内的文件，显示时间；否则显示年份
+    if (date.getFullYear() === now.getFullYear()) {
+      const h = date.getHours().toString().padStart(2, '0');
+      const m = date.getMinutes().toString().padStart(2, '0');
+      return `${month} ${day} ${h}:${m}`;
+    } else {
+      return `${month} ${day}  ${date.getFullYear()}`;
     }
   }
 
-  private async createDirectoryRecursive(path: string): Promise<void> {
+  private async ensureParentDir(fullPath: string): Promise<void> {
+    const dir = fullPath.substring(0, fullPath.lastIndexOf('/'));
+    if (dir) {
+      await this.mkdirRecursive(dir);
+    }
+  }
+
+  private async mkdirRecursive(path: string): Promise<void> {
     const parts = path.split('/');
-    let currentPath = '';
-    
+    let current = '';
     for (const part of parts) {
-      if (part) {
-        currentPath += '/' + part;
+      if (!part) continue;
+      current += '/' + part;
+      try {
+        await fs.stat(current);
+      } catch (e) {
         try {
-          await fs.stat(currentPath);
-        } catch (error) {
-          await fs.mkdir(currentPath);
+          await fs.mkdir(current);
+        } catch (mkErr) {
+          // 可能已被并发创建
         }
       }
     }
   }
 
   private async rmdirRecursive(path: string): Promise<void> {
-    try {
-      const entries: string[] = await fs.listFile(path);
-      for (let i = 0; i < entries.length; i++) {
-        const entryName: string = entries[i];
-        const entryPath = `${path}/${entryName}`;
-        try {
-          const stat = await fs.stat(entryPath);
-          if (stat.isDirectory()) {
-            await this.rmdirRecursive(entryPath);
-          } else {
-            await fs.unlink(entryPath);
-          }
-        } catch (entryError) {
-          // 忽略单个文件/目录的错误，继续处理其他项
+    const entries: string[] = await fs.listFile(path);
+    for (const name of entries) {
+      const entryPath = `${path}/${name}`;
+      try {
+        const stat = await fs.stat(entryPath);
+        if (stat.isDirectory()) {
+          await this.rmdirRecursive(entryPath);
+        } else {
+          await fs.unlink(entryPath);
         }
+      } catch (e) {
+        // ignore
       }
-      await fs.rmdir(path);
-    } catch (error) {
-      throw new Error('Failed to delete directory recursively');
     }
+    await fs.rmdir(path);
   }
 }

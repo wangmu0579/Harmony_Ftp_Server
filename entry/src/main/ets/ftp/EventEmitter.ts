@@ -7,12 +7,13 @@ export class EventEmitter {
     }
     this.events.get(event)!.push(listener);
   }
+
   emit(event: string, ...args: unknown[]): void {
     const listeners = this.events.get(event);
     if (listeners) {
-      listeners.forEach(listener => {
+      for (const listener of listeners) {
         listener(...args);
-      });
+      }
     }
   }
 
@@ -32,10 +33,5 @@ export class EventEmitter {
     } else {
       this.events.clear();
     }
-  }
-
-  listenerCount(event: string): number {
-    const listeners = this.events.get(event);
-    return listeners ? listeners.length : 0;
   }
 }

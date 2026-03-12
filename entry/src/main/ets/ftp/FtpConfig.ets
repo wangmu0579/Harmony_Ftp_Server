@@ -1,4 +1,3 @@
-// 配置接口
 export interface FtpConfigOptions {
   port?: number;
   rootDirectory?: string;
@@ -7,6 +6,8 @@ export interface FtpConfigOptions {
   password?: string;
   allowAnonymous?: boolean;
   serverIp?: string;
+  passivePortMin?: number;
+  passivePortMax?: number;
 }
 
 export class FtpConfig {
@@ -17,6 +18,8 @@ export class FtpConfig {
   readonly password: string;
   readonly allowAnonymous: boolean;
   readonly serverIp: string;
+  readonly passivePortMin: number;
+  readonly passivePortMax: number;
 
   constructor(options: FtpConfigOptions = {}) {
     this.port = options.port || 2121;
@@ -25,10 +28,11 @@ export class FtpConfig {
     this.user = options.user || 'anonymous';
     this.password = options.password || '';
     this.allowAnonymous = options.allowAnonymous !== undefined ? options.allowAnonymous : true;
-    this.serverIp = options.serverIp || '127.0.0.1';
+    this.serverIp = options.serverIp || '0.0.0.0';
+    this.passivePortMin = options.passivePortMin || 50000;
+    this.passivePortMax = options.passivePortMax || 50100;
   }
 
-  // 验证用户凭据
   validateCredentials(user: string, password: string): boolean {
     if (this.allowAnonymous && user === 'anonymous') {
       return true;

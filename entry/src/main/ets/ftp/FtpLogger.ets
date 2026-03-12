@@ -1,29 +1,42 @@
-export class FtpLogger {
-  private logLevel: 'debug' | 'info' | 'warn' | 'error' = 'info';
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
-  setLogLevel(level: 'debug' | 'info' | 'warn' | 'error'): void {
+export type LogCallback = (level: LogLevel, message: string) => void;
+
+export class FtpLogger {
+  private logLevel: LogLevel = 'debug';
+  private callback: LogCallback | null = null;
+
+  setLogLevel(level: LogLevel): void {
     this.logLevel = level;
+  }
+
+  setCallback(cb: LogCallback | null): void {
+    this.callback = cb;
   }
 
   debug(message: string): void {
     if (this.logLevel === 'debug') {
-      console.debug(`[FTP DEBUG] ${new Date().toISOString()} - ${message}`);
+      console.debug(`[FTP DEBUG] ${message}`);
+      this.callback?.('debug', message);
     }
   }
 
   info(message: string): void {
     if (['debug', 'info'].includes(this.logLevel)) {
-      console.info(`[FTP INFO] ${new Date().toISOString()} - ${message}`);
+      console.info(`[FTP INFO] ${message}`);
+      this.callback?.('info', message);
     }
   }
 
   warn(message: string): void {
     if (['debug', 'info', 'warn'].includes(this.logLevel)) {
-      console.warn(`[FTP WARN] ${new Date().toISOString()} - ${message}`);
+      console.warn(`[FTP WARN] ${message}`);
+      this.callback?.('warn', message);
     }
   }
 
   error(message: string): void {
-    console.error(`[FTP ERROR] ${new Date().toISOString()} - ${message}`);
+    console.error(`[FTP ERROR] ${message}`);
+    this.callback?.('error', message);
   }
 }
