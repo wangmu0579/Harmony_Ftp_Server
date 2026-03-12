@@ -1,4 +1,5 @@
 import socket from '@ohos.net.socket';
+import util from '@ohos.util';
 import { FtpConfig } from './FtpConfig';
 import { FtpLogger } from './FtpLogger';
 import { FtpCommandHandler } from './FtpCommandHandler';
@@ -28,6 +29,10 @@ export class FtpConnection extends EventEmitter {
 
   // 重命名源路径
   private renameFrom: string = '';
+
+  // UTF-8 编解码
+  private textDecoder: util.TextDecoder = util.TextDecoder.create('utf-8');
+  private textEncoder: util.TextEncoder = new util.TextEncoder();
 
   constructor(clientSocket: socket.TCPSocketConnection, config: FtpConfig, logger: FtpLogger) {
     super();
@@ -62,11 +67,7 @@ export class FtpConnection extends EventEmitter {
 
   private async handleData(data: ArrayBuffer): Promise<void> {
     try {
-      const bytes = new Uint8Array(data);
-      let text = '';
-      for (let i = 0; i < bytes.length; i++) {
-        text += String.fromCharCode(bytes[i]);
-      }
+      const text = this.textDecoder.decodeWithStream(new Uint8Array(data));
       // FTP 可能一次收到多条命令（以 \r\n 分隔）
       const lines = text.split('\r\n');
       for (const line of lines) {
@@ -86,7 +87,8 @@ export class FtpConnection extends EventEmitter {
     try {
       const response = `${code} ${message}\r\n`;
       this.logger.debug(`>> ${response.trim()}`);
-      this.clientSocket.send({ data: response });
+      const encoded = this.textEncoder.encodeInto(response);
+      this.clientSocket.send({ data: encoded.buffer });
     } catch (error) {
       this.logger.error(`Error sending response: ${error}`);
     }
@@ -95,7 +97,8 @@ export class FtpConnection extends EventEmitter {
   // 多行响应的中间行：格式 "code-text"
   sendMultiLineBegin(code: number, message: string): void {
     try {
-      this.clientSocket.send({ data: `${code}-${message}\r\n` });
+      const encoded = this.textEncoder.encodeInto(`${code}-${message}\r\n`);
+      this.clientSocket.send({ data: encoded.buffer });
     } catch (error) {
       this.logger.error(`Error sending multi-line begin: ${error}`);
     }
@@ -104,7 +107,8 @@ export class FtpConnection extends EventEmitter {
   // 多行响应的特性行：以空格开头
   sendMultiLineLine(message: string): void {
     try {
-      this.clientSocket.send({ data: ` ${message}\r\n` });
+      const encoded = this.textEncoder.encodeInto(` ${message}\r\n`);
+      this.clientSocket.send({ data: encoded.buffer });
     } catch (error) {
       this.logger.error(`Error sending multi-line: ${error}`);
     }
@@ -119,7 +123,12 @@ export class FtpConnection extends EventEmitter {
     if (!this.dataSocket) {
       throw new Error('No data connection');
     }
-    await this.dataSocket.send({ data });
+    if (typeof data === 'string') {
+      const encoded = this.textEncoder.encodeInto(data);
+      await this.dataSocket.send({ data: encoded.buffer });
+    } else {
+      await this.dataSocket.send({ data });
+    }
   }
 
   // 打开被动模式数据监听

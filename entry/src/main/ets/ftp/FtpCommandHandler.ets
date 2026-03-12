@@ -188,6 +188,7 @@ export class FtpCommandHandler {
         listPath = si === -1 ? '' : listPath.substring(si + 1);
       }
       const target = listPath || this.connection.getCurrentDirectory();
+      this.connection.getLogger().info(`LIST target=${target} realPath=${this.fs.resolvePath(target)}`);
 
       this.connection.sendResponse(150, 'Opening data connection for directory listing');
 
@@ -231,6 +232,7 @@ export class FtpCommandHandler {
     try {
       const target = path || this.connection.getCurrentDirectory();
       const realPath = this.fs.resolvePath(target);
+      this.connection.getLogger().info(`MLSD target=${target} realPath=${realPath}`);
       const entries = await this.fs.getFilesInDirectory(realPath);
 
       this.connection.sendResponse(150, 'Opening data connection for MLSD');
@@ -252,6 +254,7 @@ export class FtpCommandHandler {
       await this.connection.closeDataConnection();
       this.connection.sendResponse(226, 'Transfer complete');
     } catch (error) {
+      this.connection.getLogger().error(`MLSD error: ${error}`);
       await this.connection.closeDataConnection();
       this.connection.sendResponse(550, 'Failed to list directory');
     }

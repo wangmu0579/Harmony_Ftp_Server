@@ -28,6 +28,7 @@ export class FtpFileSystem {
         this.rootPath = '/';
       }
     }
+    console.info(`[FTP] FtpFileSystem root: ${this.rootPath}`);
   }
 
   // 将 FTP 虚拟路径解析为真实文件系统路径
@@ -35,13 +36,11 @@ export class FtpFileSystem {
     if (!ftpPath || ftpPath === '/') {
       return this.rootPath;
     }
-    // 绝对路径
     if (ftpPath.startsWith('/')) {
       const normalized = this.normalizePath(ftpPath);
       if (normalized === '/') return this.rootPath;
       return `${this.rootPath}${normalized}`;
     }
-    // 相对路径：基于当前目录
     const cwd = this.connection.getCurrentDirectory();
     const combined = cwd === '/' ? `/${ftpPath}` : `${cwd}/${ftpPath}`;
     const normalized = this.normalizePath(combined);
@@ -49,7 +48,13 @@ export class FtpFileSystem {
     return `${this.rootPath}${normalized}`;
   }
 
-  // 规范化路径，处理 . 和 .. ，防止路径穿越
+  private joinPath(base: string, relative: string): string {
+    if (base.endsWith('/')) {
+      return base + relative.substring(1);
+    }
+    return base + relative;
+  }
+
   private normalizePath(path: string): string {
     const parts = path.split('/');
     const stack: string[] = [];
@@ -81,12 +86,18 @@ export class FtpFileSystem {
   async listFileNames(ftpPath: string): Promise<string> {
     const fullPath = this.resolvePath(ftpPath);
     const entries = await this.getFilesInDirectory(fullPath);
-    return entries.map(e => e.name).join('\r\n') + '\r\n';
+    let result = '';
+    for (const entry of entries) {
+      result += entry.name + '\r\n';
+    }
+    return result;
   }
 
   async getFilesInDirectory(realPath: string): Promise<FileEntry[]> {
     try {
+      console.info(`[FTP] listFile path: ${realPath}`);
       const names: string[] = await fs.listFile(realPath);
+      console.info(`[FTP] listFile got ${names.length} entries`);
       const result: FileEntry[] = [];
       for (const name of names) {
         const entry: FileEntry = { name: name, path: `${realPath}/${name}` };
@@ -94,7 +105,7 @@ export class FtpFileSystem {
       }
       return result;
     } catch (error) {
-      console.error('[FTP] listFile error:', error);
+      console.error(`[FTP] listFile error for ${realPath}:`, JSON.stringify(error));
       return [];
     }
   }
@@ -114,14 +125,12 @@ export class FtpFileSystem {
   }
 
   async getFileSize(ftpPath: string): Promise<number> {
-    const fullPath = this.resolvePath(ftpPath);
-    const stat = await fs.stat(fullPath);
+    const stat = await fs.stat(this.resolvePath(ftpPath));
     return stat.size;
   }
 
   async getModifiedTime(ftpPath: string): Promise<Date> {
-    const fullPath = this.resolvePath(ftpPath);
-    const stat = await fs.stat(fullPath);
+    const stat = await fs.stat(this.resolvePath(ftpPath));
     return new Date(stat.mtime * 1000);
   }
 
@@ -164,14 +173,11 @@ export class FtpFileSystem {
   }
 
   async deleteFile(ftpPath: string): Promise<void> {
-    const fullPath = this.resolvePath(ftpPath);
-    await fs.unlink(fullPath);
+    await fs.unlink(this.resolvePath(ftpPath));
   }
 
   async rename(fromFtpPath: string, toFtpPath: string): Promise<void> {
-    const fromFull = this.resolvePath(fromFtpPath);
-    const toFull = this.resolvePath(toFtpPath);
-    await fs.rename(fromFull, toFull);
+    await fs.rename(this.resolvePath(fromFtpPath), this.resolvePath(toFtpPath));
   }
 
   async createDirectory(ftpPath: string): Promise<void> {
@@ -207,7 +213,6 @@ export class FtpFileSystem {
     const now = new Date();
     const month = months[date.getMonth()];
     const day = date.getDate().toString().padStart(2, ' ');
-    // 如果是今年内的文件，显示时间；否则显示年份
     if (date.getFullYear() === now.getFullYear()) {
       const h = date.getHours().toString().padStart(2, '0');
       const m = date.getMinutes().toString().padStart(2, '0');
@@ -233,11 +238,7 @@ export class FtpFileSystem {
       try {
         await fs.stat(current);
       } catch (e) {
-        try {
-          await fs.mkdir(current);
-        } catch (mkErr) {
-          // 可能已被并发创建
-        }
+        try { await fs.mkdir(current); } catch (mkErr) { /* ignore */ }
       }
     }
   }
@@ -253,9 +254,7 @@ export class FtpFileSystem {
         } else {
           await fs.unlink(entryPath);
         }
-      } catch (e) {
-        // ignore
-      }
+      } catch (e) { /* ignore */ }
     }
     await fs.rmdir(path);
   }
