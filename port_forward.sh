@@ -1,22 +1,17 @@
-hdc -t 127.0.0.1:5555 fport tcp:2121 tcp:2121
-hdc -t 127.0.0.1:5555 fport tcp:50000 tcp:50000
-hdc -t 127.0.0.1:5555 fport tcp:50001 tcp:50001
-hdc -t 127.0.0.1:5555 fport tcp:50002 tcp:50002
-hdc -t 127.0.0.1:5555 fport tcp:50003 tcp:50003
-hdc -t 127.0.0.1:5555 fport tcp:50004 tcp:50004
-hdc -t 127.0.0.1:5555 fport tcp:50005 tcp:50005
-hdc -t 127.0.0.1:5555 fport tcp:50006 tcp:50006
-hdc -t 127.0.0.1:5555 fport tcp:50007 tcp:50007
-hdc -t 127.0.0.1:5555 fport tcp:50008 tcp:50008
-hdc -t 127.0.0.1:5555 fport tcp:50009 tcp:50009
-hdc -t 127.0.0.1:5555 fport tcp:50010 tcp:50010
-hdc -t 127.0.0.1:5555 fport tcp:50011 tcp:50011
-hdc -t 127.0.0.1:5555 fport tcp:50012 tcp:50012
-hdc -t 127.0.0.1:5555 fport tcp:50013 tcp:50013
-hdc -t 127.0.0.1:5555 fport tcp:50014 tcp:50014
-hdc -t 127.0.0.1:5555 fport tcp:50015 tcp:50015
-hdc -t 127.0.0.1:5555 fport tcp:50016 tcp:50016
-hdc -t 127.0.0.1:5555 fport tcp:50017 tcp:50017
-hdc -t 127.0.0.1:5555 fport tcp:50018 tcp:50018
-hdc -t 127.0.0.1:5555 fport tcp:50019 tcp:50019
-hdc -t 127.0.0.1:5555 fport tcp:50020 tcp:50020
+#!/bin/bash
+# 端口转发脚本：将宿主机端口映射到鸿蒙模拟器端口
+# 用于 FTP 被动模式数据连接
+
+DEVICE="127.0.0.1:5555"
+
+# 控制端口
+hdc -t $DEVICE fport tcp:2121 tcp:2121
+
+# 被动模式数据端口范围 50000-50100
+for port in {50000..50100}; do
+  hdc -t $DEVICE fport tcp:$port tcp:$port
+done
+
+echo "✓ 端口转发完成："
+echo "  - 控制端口: 2121"
+echo "  - 数据端口: 50000-50100"

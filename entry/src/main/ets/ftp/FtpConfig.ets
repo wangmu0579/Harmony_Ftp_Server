@@ -30,7 +30,7 @@ export class FtpConfig {
     this.allowAnonymous = options.allowAnonymous !== undefined ? options.allowAnonymous : true;
     this.serverIp = options.serverIp || '0.0.0.0';
     this.passivePortMin = options.passivePortMin || 50000;
-    this.passivePortMax = options.passivePortMax || 50100;
+    this.passivePortMax = options.passivePortMax || 50020;
   }
 
   validateCredentials(user: string, password: string): boolean {

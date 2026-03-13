@@ -83,12 +83,23 @@ export class FtpConnection extends EventEmitter {
     }
   }
 
+  private encodeUTF8(str: string): ArrayBuffer {
+    const arr = this.textEncoder.encodeInto(str);
+    if (arr) return arr.buffer;
+    // fallback: ASCII encoding
+    const buf = new ArrayBuffer(str.length);
+    const view = new Uint8Array(buf);
+    for (let i = 0; i < str.length; i++) {
+      view[i] = str.charCodeAt(i) & 0xFF;
+    }
+    return buf;
+  }
+
   sendResponse(code: number, message: string): void {
     try {
       const response = `${code} ${message}\r\n`;
       this.logger.debug(`>> ${response.trim()}`);
-      const encoded = this.textEncoder.encodeInto(response);
-      this.clientSocket.send({ data: encoded.buffer });
+      this.clientSocket.send({ data: this.encodeUTF8(response) });
     } catch (error) {
       this.logger.error(`Error sending response: ${error}`);
     }
@@ -97,8 +108,7 @@ export class FtpConnection extends EventEmitter {
   // 多行响应的中间行：格式 "code-text"
   sendMultiLineBegin(code: number, message: string): void {
     try {
-      const encoded = this.textEncoder.encodeInto(`${code}-${message}\r\n`);
-      this.clientSocket.send({ data: encoded.buffer });
+      this.clientSocket.send({ data: this.encodeUTF8(`${code}-${message}\r\n`) });
     } catch (error) {
       this.logger.error(`Error sending multi-line begin: ${error}`);
     }
@@ -107,8 +117,7 @@ export class FtpConnection extends EventEmitter {
   // 多行响应的特性行：以空格开头
   sendMultiLineLine(message: string): void {
     try {
-      const encoded = this.textEncoder.encodeInto(` ${message}\r\n`);
-      this.clientSocket.send({ data: encoded.buffer });
+      this.clientSocket.send({ data: this.encodeUTF8(` ${message}\r\n`) });
     } catch (error) {
       this.logger.error(`Error sending multi-line: ${error}`);
     }
@@ -124,8 +133,7 @@ export class FtpConnection extends EventEmitter {
       throw new Error('No data connection');
     }
     if (typeof data === 'string') {
-      const encoded = this.textEncoder.encodeInto(data);
-      await this.dataSocket.send({ data: encoded.buffer });
+      await this.dataSocket.send({ data: this.encodeUTF8(data) });
     } else {
       await this.dataSocket.send({ data });
     }

@@ -140,7 +140,11 @@ export class FtpCommandHandler {
   private async handlePASV(): Promise<void> {
     try {
       const port = await this.connection.openPassiveDataServer();
-      const ip = this.connection.getConfig().serverIp.split('.').join(',');
+      const config = this.connection.getConfig();
+      // 模拟器：返回 127.0.0.1（通过端口转发连接）
+      // 真机：返回 WiFi IP
+      const isEmulator = config.serverIp.startsWith('192.168.76.') || config.serverIp.startsWith('10.0.2.');
+      const ip = isEmulator ? '127,0,0,1' : config.serverIp.split('.').join(',');
       const p1 = Math.floor(port / 256);
       const p2 = port % 256;
       this.connection.sendResponse(227, `Entering Passive Mode (${ip},${p1},${p2})`);
