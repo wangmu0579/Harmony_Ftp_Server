@@ -5,13 +5,13 @@
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "certpath": "/Users/wangmu0579/.ohos/config/default_ftpServer_T999x3hch3879zw7jH4ymq3jN-tX_U2zvjQpETPzatQ=.cer",
-          "keyAlias": "debugKey",
-          "keyPassword": "0000001B3CC858EA4E628ADB8664F61E57F7789DBA66FF8DD36485A03E42535949ED1D63489F701E5C3B15",
+          "certpath": "/Users/wangmu0579/jianwei.ftpserver.cer",
+          "keyAlias": "ftpserver",
+          "keyPassword": "0000001BB5DE720D7DD052B38BD588351D180A02F49218D1D6D5E5FCC0E91A8510F38634568B9EB646EE6A",
           "profile": "/Users/wangmu0579/.ohos/config/default_ftpServer_T999x3hch3879zw7jH4ymq3jN-tX_U2zvjQpETPzatQ=.p7b",
           "signAlg": "SHA256withECDSA",
-          "storeFile": "/Users/wangmu0579/.ohos/config/default_ftpServer_T999x3hch3879zw7jH4ymq3jN-tX_U2zvjQpETPzatQ=.p12",
-          "storePassword": "0000001B1A99E720516AD6B01E15E2165C350EE624FF29B3009B8DEF4342BB0C27EFE93122C7D545CD56C6"
+          "storeFile": "/Users/wangmu0579/jianwei.ftpserver.key.store.p12",
+          "storePassword": "0000001B7610F8B1AA29BAC83F27B4375EA1596ADCF4BFD5E7D8E5E990DB8D8015528AF39E5E3E37A42AC4"
         }
       }
     ],
@@ -32,7 +32,7 @@
     ],
     "buildModeSet": [
       {
-        "name": "debug",
+        "name": "debug"
       },
       {
         "name": "release"
