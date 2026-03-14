@@ -3,6 +3,10 @@
     {
       "name": "app_name",
       "value": "FTP SERVER"
+    },
+    {
+      "name": "app_desc",
+      "value": "A lightweight FTP server running on HarmonyOS. Share files over WiFi with any FTP client."
     }
   ]
 }

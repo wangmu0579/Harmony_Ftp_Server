@@ -1,10 +1,12 @@
 {
   "app": {
     "bundleName": "com.transport.ftpserver",
-    "vendor": "example",
+    "vendor": "wangmu",
     "versionCode": 1000000,
     "versionName": "1.0.0",
     "icon": "$media:layered_image",
-    "label": "$string:app_name"
+    "label": "$string:app_name",
+    "description": "$string:app_desc",
+    "minAPIVersion": 12
   }
 }

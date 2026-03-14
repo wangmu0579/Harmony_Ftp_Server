@@ -17,7 +17,7 @@
         "reason": "$string:permission_network_info",
         "usedScene": {
           "abilities": ["EntryAbility"],
-          "when": "always"
+          "when": "inuse"
         }
       },
       {
@@ -26,22 +26,6 @@
         "usedScene": {
           "abilities": ["EntryAbility"],
           "when": "inuse"
-        }
-      },
-      {
-        "name": "ohos.permission.READ_MEDIA",
-        "reason": "$string:permission_read_media",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "always"
-        }
-      },
-      {
-        "name": "ohos.permission.WRITE_MEDIA",
-        "reason": "$string:permission_write_media",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "always"
         }
       }
     ],

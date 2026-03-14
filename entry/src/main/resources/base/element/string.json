@@ -2,11 +2,11 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "module description"
+      "value": "FTP Server entry module"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "description"
+      "value": "FTP Server - Share files over WiFi"
     },
     {
       "name": "EntryAbility_label",
@@ -14,19 +14,19 @@
     },
     {
       "name": "permission_network_info",
-      "value": "Needed to get device IP address for FTP server"
+      "value": "Used to get the device WiFi IP address to display the FTP server connection address"
     },
     {
       "name": "permission_internet",
-      "value": "Needed for FTP server network operations"
+      "value": "Used to run the FTP server and accept client connections over the local network"
     },
     {
       "name": "permission_read_media",
-      "value": "Needed to read files for FTP transfer"
+      "value": "Used to read files for FTP download transfers"
     },
     {
       "name": "permission_write_media",
-      "value": "Needed to write files for FTP transfer"
+      "value": "Used to write files received via FTP upload transfers"
     }
   ]
 }
